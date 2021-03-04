@@ -69,7 +69,7 @@ jobs:
     env:
       REPO: https://github.com/${{ github.repository }}
       BUILD_IMAGE: adlinktech/zenoh-dev-x86_64-unknown-linux-musl
-      PUSH_IMAGE: ghcr.io/${{ github.repository }}:${{ github.ref#refs/heads/ }}
+      PUSH_IMAGE: ghcr.io/${{ github.repository }}:${ GITHUB_REF#refs/heads/}
 
     steps:
     -
