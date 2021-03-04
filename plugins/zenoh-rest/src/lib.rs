@@ -149,6 +149,7 @@ fn response(status: StatusCode, content_type: Mime, body: &str) -> Response {
     let mut res = Response::new(status);
     res.set_content_type(content_type);
     res.set_body(body);
+    res.insert_header("Access-Control-Allow-Origin", "*");
     res
 }
 
