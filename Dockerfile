@@ -24,6 +24,9 @@
 
 FROM alpine:latest
 
+ARG REPO
+LABEL org.opencontainers.image.source ${REPO}
+
 RUN apk add --no-cache libgcc libstdc++
 
 COPY target/x86_64-unknown-linux-musl/release/zenohd /

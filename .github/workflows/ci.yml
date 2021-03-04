@@ -60,3 +60,33 @@ jobs:
       with:
         command: test
         args: --verbose
+
+  docker:
+
+    needs: [build]
+    name: Build docker images
+    runs-on: ubuntu-latest
+    env:
+      REPO: https://github.com/${{ github.repository }}
+      BUILD_IMAGE: adlinktech/zenoh-dev-x86_64-unknown-linux-musl
+      PUSH_IMAGE: ghcr.io/${{ github.repository }}:${{ github.ref }}
+
+    steps:
+    -
+      name: Login to GitHub Container Registry
+      uses: docker/login-action@v1
+      with:
+        registry: ghcr.io
+        username: ${{ github.repository_owner }}
+        password: ${{ secrets.GHCR_TOKEN }}
+    -
+      name: Checkout
+      uses: actions/checkout@v2
+    -
+      name: Build zenoh in docker image
+      run: docker run --init --rm -v $(pwd):/workdir -w /workdir ${{ env.BUILD_IMAGE }} cargo build --release --bins --lib --examples
+    -
+      name: Build and push docker image
+      run: |
+        docker build --build-arg REPO=${REPO} -t ${{ env.PUSH_IMAGE }} .
+        docker push ${{ env.PUSH_IMAGE }}
