@@ -65,16 +65,20 @@
 //!     }
 //! }
 //! ```
+pub mod plugins;
+pub mod protocol;
+pub mod routing;
+pub mod runtime;
 
 use async_std::channel::bounded;
 use futures::prelude::*;
 use log::{debug, trace};
-use zenoh_protocol::core::WhatAmI;
-use zenoh_router::runtime::orchestrator::{Loop, SessionOrchestrator};
+use protocol::core::WhatAmI;
+use runtime::orchestrator::{Loop, SessionOrchestrator};
 use zenoh_util::properties::config::*;
 // Shared memory and zero-copy
 #[cfg(feature = "zero-copy")]
-pub use zenoh_protocol::io::{SharedMemoryBuf, SharedMemoryBufInfo, SharedMemoryManager};
+pub use protocol::io::{SharedMemoryBuf, SharedMemoryBufInfo, SharedMemoryManager};
 
 mod types;
 use git_version::git_version;
@@ -86,10 +90,10 @@ pub mod info;
 mod session;
 pub use session::*;
 
-pub use zenoh_protocol::proto::{data_kind, encoding};
+pub use protocol::proto::{data_kind, encoding};
 
 pub mod queryable {
-    pub use zenoh_protocol::core::queryable::*;
+    pub use super::protocol::core::queryable::*;
 }
 
 pub mod config;
@@ -97,8 +101,8 @@ pub use zenoh_util::properties::config::ConfigProperties;
 
 pub mod utils {
     pub mod resource_name {
-        pub use zenoh_protocol::core::rname::include;
-        pub use zenoh_protocol::core::rname::intersect;
+        pub use super::super::protocol::core::rname::include;
+        pub use super::super::protocol::core::rname::intersect;
     }
 }
 
@@ -210,8 +214,7 @@ pub async fn scout(what: WhatAmI, config: ConfigProperties) -> HelloStream {
 /// # })
 /// ```
 pub async fn open(config: ConfigProperties) -> ZResult<Session> {
-    trace!("open({})", &config);
     debug!("Zenoh Rust API {}", GIT_VERSION);
-    debug!("Config: {}", &config);
+    debug!("Config: {:?}", &config);
     Session::new(config).await
 }
