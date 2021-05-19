@@ -97,13 +97,13 @@ impl SerializationBatch {
     }
 
     /// Verify that the [`SerializationBatch`][SerializationBatch] has no serialized bytes.
-    #[inline]
+    #[inline(always)]
     pub(super) fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Get the total number of bytes that have been serialized on the [`SerializationBatch`][SerializationBatch].
-    #[inline]
+    #[inline(always)]
     pub(super) fn len(&self) -> usize {
         let len = self.buffer.len();
         if self.is_streamed() {
@@ -115,13 +115,13 @@ impl SerializationBatch {
 
     /// Verify that the [`SerializationBatch`][SerializationBatch] is for a stream-based protocol, i.e., the first
     /// 2 bytes are reserved to encode the total amount of serialized bytes as 16-bits little endian.
-    #[inline]
+    #[inline(always)]
     pub(super) fn is_streamed(&self) -> bool {
         self.is_streamed
     }
 
     /// Clear the [`SerializationBatch`][SerializationBatch] memory buffer and related internal state.
-    #[inline]
+    #[inline(always)]
     pub(super) fn clear(&mut self) {
         self.current_frame = CurrentFrame::None;
         self.buffer.clear();
@@ -132,7 +132,7 @@ impl SerializationBatch {
 
     /// In case the [`SerializationBatch`][SerializationBatch] is for a stream-based protocol, use the first 2 bytes
     /// to encode the total amount of serialized bytes as 16-bits little endian.
-    #[inline]
+    #[inline(always)]
     pub(super) fn write_len(&mut self) {
         if self.is_streamed() {
             let length = self.len() as LengthType;
@@ -142,7 +142,7 @@ impl SerializationBatch {
     }
 
     /// Get a `&[u8]` to access the internal memory buffer, usually for transmitting it on the network.
-    #[inline]
+    #[inline(always)]
     pub(super) fn get_buffer(&self) -> &[u8] {
         self.buffer.get_first_slice(..)
     }
@@ -518,7 +518,7 @@ mod tests {
 
                     assert!(!batches.is_empty());
 
-                    let mut fragments = RBuf::new();
+                    let mut fragments = WBuf::new(0, false);
                     for batch in batches.iter() {
                         // Convert the buffer into an RBuf
                         let mut rbuf: RBuf = batch.get_serialized_messages().into();
@@ -529,9 +529,7 @@ mod tests {
                             SessionBody::Frame(Frame { payload, .. }) => match payload {
                                 FramePayload::Fragment { buffer, is_final } => {
                                     assert!(!buffer.is_empty());
-                                    for s in buffer.drain_slices().drain(..) {
-                                        fragments.add_slice(s)
-                                    }
+                                    fragments.write_rbuf_slices(&buffer);
                                     if is_final {
                                         break;
                                     }
@@ -541,6 +539,7 @@ mod tests {
                             _ => assert!(false),
                         }
                     }
+                    let mut fragments: RBuf = fragments.into();
 
                     assert!(!fragments.is_empty());
 

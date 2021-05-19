@@ -140,96 +140,68 @@ impl LinkUnixSocketStream {
         log::trace!("UnixSocketStream link shutdown {}: {:?}", self, res);
         res.map_err(|e| {
             zerror2!(ZErrorKind::IoError {
-                descr: format!("{}", e),
+                descr: e.to_string(),
             })
         })
     }
 
-    #[inline]
     pub(crate) async fn write(&self, buffer: &[u8]) -> ZResult<usize> {
-        match (&self.socket).write(buffer).await {
-            Ok(n) => Ok(n),
-            Err(e) => {
-                log::trace!(
-                    "Transmission error on UnixSocketStream link {}: {}",
-                    self,
-                    e
-                );
-                zerror!(ZErrorKind::IoError {
-                    descr: format!("{}", e)
-                })
-            }
-        }
+        (&self.socket).write(buffer).await.map_err(|e| {
+            let e = format!("Write error on UnixSocketStream link {}: {}", self, e);
+            log::trace!("{}", e);
+            zerror2!(ZErrorKind::IoError { descr: e })
+        })
     }
 
-    #[inline]
     pub(crate) async fn write_all(&self, buffer: &[u8]) -> ZResult<()> {
-        match (&self.socket).write_all(buffer).await {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                log::trace!(
-                    "Transmission error on UnixSocketStream link {}: {}",
-                    self,
-                    e
-                );
-                zerror!(ZErrorKind::IoError {
-                    descr: format!("{}", e)
-                })
-            }
-        }
+        (&self.socket).write_all(buffer).await.map_err(|e| {
+            let e = format!("Write error on UnixSocketStream link {}: {}", self, e);
+            log::trace!("{}", e);
+            zerror2!(ZErrorKind::IoError { descr: e })
+        })
     }
 
-    #[inline]
     pub(crate) async fn read(&self, buffer: &mut [u8]) -> ZResult<usize> {
-        match (&self.socket).read(buffer).await {
-            Ok(n) => Ok(n),
-            Err(e) => {
-                log::trace!("Reception error on UnixSocketStream link {}: {}", self, e);
-                zerror!(ZErrorKind::IoError {
-                    descr: format!("{}", e)
-                })
-            }
-        }
+        (&self.socket).read(buffer).await.map_err(|e| {
+            let e = format!("Read error on UnixSocketStream link {}: {}", self, e);
+            log::trace!("{}", e);
+            zerror2!(ZErrorKind::IoError { descr: e })
+        })
     }
 
-    #[inline]
     pub(crate) async fn read_exact(&self, buffer: &mut [u8]) -> ZResult<()> {
-        match (&self.socket).read_exact(buffer).await {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                log::trace!("Reception error on UnixSocketStream link {}: {}", self, e);
-                zerror!(ZErrorKind::IoError {
-                    descr: format!("{}", e)
-                })
-            }
-        }
+        (&self.socket).read_exact(buffer).await.map_err(|e| {
+            let e = format!("Read error on UnixSocketStream link {}: {}", self, e);
+            log::trace!("{}", e);
+            zerror2!(ZErrorKind::IoError { descr: e })
+        })
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn get_src(&self) -> Locator {
         Locator::UnixSocketStream(LocatorUnixSocketStream(PathBuf::from(
             self.src_path.clone(),
         )))
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn get_dst(&self) -> Locator {
         Locator::UnixSocketStream(LocatorUnixSocketStream(PathBuf::from(
             self.dst_path.clone(),
         )))
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn get_mtu(&self) -> usize {
         *UNIXSOCKSTREAM_DEFAULT_MTU
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn is_reliable(&self) -> bool {
         true
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn is_streamed(&self) -> bool {
         true
     }
@@ -419,36 +391,29 @@ impl LinkManagerTrait for LinkManagerUnixSocketStream {
         open_mode.insert(nix::sys::stat::Mode::S_IRUSR);
         open_mode.insert(nix::sys::stat::Mode::S_IWUSR);
 
-        let lock_fd = match nix::fcntl::open(
+        let lock_fd = nix::fcntl::open(
             std::path::Path::new(&lock_file_path),
             open_flags,
             open_mode,
-        ) {
-            Ok(raw_fd) => raw_fd,
-            Err(e) => {
-                let e = format!(
-                        "Can not create a new UnixSocketStream listener on {} - Unable to open lock file: {}",
-                        path, e
-                    );
-                log::warn!("{}", e);
-                return zerror!(ZErrorKind::InvalidLink { descr: e });
-            }
-        };
+        ).map_err(|e| {
+            let e = format!(
+                "Can not create a new UnixSocketStream listener on {} - Unable to open lock file: {}",
+                path, e
+            );
+            log::warn!("{}", e);
+            zerror2!(ZErrorKind::InvalidLink { descr: e })
+        })?;
 
         // We try to acquire the lock
-
-        match nix::fcntl::flock(lock_fd, nix::fcntl::FlockArg::LockExclusiveNonblock) {
-            Ok(()) => (),
-            Err(e) => {
-                let _ = nix::unistd::close(lock_fd);
-                let e = format!(
-                    "Can not create a new UnixSocketStream listener on {} - Unable to acquire look: {}",
-                    path, e
-                );
-                log::warn!("{}", e);
-                return zerror!(ZErrorKind::InvalidLink { descr: e });
-            }
-        };
+        nix::fcntl::flock(lock_fd, nix::fcntl::FlockArg::LockExclusiveNonblock).map_err(|e| {
+            let _ = nix::unistd::close(lock_fd);
+            let e = format!(
+                "Can not create a new UnixSocketStream listener on {} - Unable to acquire look: {}",
+                path, e
+            );
+            log::warn!("{}", e);
+            zerror2!(ZErrorKind::InvalidLink { descr: e })
+        })?;
 
         //Lock is acquired we can remove the socket file
         // If the file does not exist this would return an error.
@@ -468,17 +433,14 @@ impl LinkManagerTrait for LinkManagerUnixSocketStream {
             }
         };
 
-        let local_addr = match socket.local_addr() {
-            Ok(addr) => addr,
-            Err(e) => {
-                let e = format!(
-                    "Can not create a new UnixSocketStream listener on {}: {}",
-                    path, e
-                );
-                log::warn!("{}", e);
-                return zerror!(ZErrorKind::InvalidLink { descr: e });
-            }
-        };
+        let local_addr = socket.local_addr().map_err(|e| {
+            let e = format!(
+                "Can not create a new UnixSocketStream listener on {}: {}",
+                path, e
+            );
+            log::warn!("{}", e);
+            zerror2!(ZErrorKind::InvalidLink { descr: e })
+        })?;
 
         let local_path = match local_addr.as_pathname() {
             Some(path) => PathBuf::from(path),

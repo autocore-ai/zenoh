@@ -69,7 +69,10 @@ const MEMORY_BACKEND_NAME: &str = "memory";
 const MEMORY_STORAGE_NAME: &str = "mem-storage";
 
 async fn run(runtime: Runtime, args: &'static ArgMatches<'_>) {
-    env_logger::init();
+    // Try to initiate login.
+    // Required in case of dynamic lib, otherwise no logs.
+    // But cannot be done twice in case of static link.
+    let _ = env_logger::try_init();
 
     let lib_loader = if let Some(values) = args.values_of("backend-search-dir") {
         LibLoader::new(&values.collect::<Vec<&str>>(), false)
@@ -180,10 +183,12 @@ async fn load_and_start_backend(
 ) -> ZResult<Sender<bool>> {
     if let Value::Properties(props) = value {
         let name = path.last_segment();
-        let (lib, lib_path) = if let Some(filename) = props.get("lib") {
-            LibLoader::load_file(filename)?
-        } else {
-            lib_loader.search_and_load(&format!("{}{}", BACKEND_LIB_PREFIX, name))?
+        let (lib, lib_path) = unsafe {
+            if let Some(filename) = props.get("lib") {
+                LibLoader::load_file(filename)?
+            } else {
+                lib_loader.search_and_load(&format!("{}{}", BACKEND_LIB_PREFIX, name))?
+            }
         };
 
         debug!("Create backend {} using {}", name, lib_path.display());

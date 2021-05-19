@@ -15,15 +15,14 @@ mod batch;
 mod rx;
 mod tx;
 
-use super::core;
-use super::io;
-use super::proto;
-use super::session;
-
 use super::super::super::link::Link;
+use super::core;
 use super::core::ZInt;
+use super::io;
 use super::io::{ArcSlice, RBuf};
+use super::proto;
 use super::proto::{SessionMessage, ZenohMessage};
+use super::session;
 use super::session::defaults::{QUEUE_PRIO_CTRL, RX_BUFF_SIZE};
 use super::{SeqNumGenerator, SessionTransport};
 use async_std::channel::{bounded, Receiver, Sender};
@@ -33,7 +32,7 @@ use async_std::task;
 use batch::*;
 use std::time::Duration;
 use tx::*;
-use zenoh_util::collections::RecyclingBufferPool;
+use zenoh_util::collections::RecyclingObjectPool;
 use zenoh_util::core::{ZError, ZErrorKind, ZResult};
 use zenoh_util::{zasynclock, zerror};
 
@@ -109,7 +108,6 @@ impl SessionTransportLink {
         let mut guard = zasynclock!(self.signal_tx);
         if let Some(signal_tx) = guard.take() {
             let _ = signal_tx.try_send(Ok(()));
-            task::yield_now().await;
         }
     }
 
@@ -213,7 +211,8 @@ async fn read_stream(link: SessionTransportLink) -> ZResult<()> {
     let mut length = [0u8, 0u8];
     // The pool of buffers
     let n = 1 + (*RX_BUFF_SIZE / link.inner.get_mtu());
-    let pool = RecyclingBufferPool::new(n, link.inner.get_mtu());
+    // let pool = RecyclingBufferPool::new(n, link.inner.get_mtu());
+    let pool = RecyclingObjectPool::new(n, || vec![0u8; link.inner.get_mtu()].into_boxed_slice());
     loop {
         // Clear the RBuf
         rbuf.clear();
@@ -237,7 +236,7 @@ async fn read_stream(link: SessionTransportLink) -> ZResult<()> {
         let mut buffer = if let Some(buffer) = pool.try_take() {
             buffer
         } else {
-            pool.alloc(to_read)
+            pool.alloc()
         };
 
         let _ = match link
@@ -277,7 +276,8 @@ async fn read_dgram(link: SessionTransportLink) -> ZResult<()> {
     let mut rbuf = RBuf::new();
     // The pool of buffers
     let n = 1 + (*RX_BUFF_SIZE / link.inner.get_mtu());
-    let pool = RecyclingBufferPool::new(n, link.inner.get_mtu());
+    // let pool = RecyclingBufferPool::new(n, link.inner.get_mtu());
+    let pool = RecyclingObjectPool::new(n, || vec![0u8; link.inner.get_mtu()].into_boxed_slice());
     loop {
         // Clear the rbuf
         rbuf.clear();
@@ -285,7 +285,7 @@ async fn read_dgram(link: SessionTransportLink) -> ZResult<()> {
         let mut buffer = if let Some(buffer) = pool.try_take() {
             buffer
         } else {
-            pool.alloc(link.inner.get_mtu())
+            pool.alloc()
         };
 
         // Async read from the underlying link

@@ -28,18 +28,11 @@ use super::proto::{SessionMessage, ZenohMessage};
 use super::session::defaults::QUEUE_PRIO_DATA;
 use super::session::{SessionEventDispatcher, SessionManager};
 use async_std::sync::{Arc, Mutex, MutexGuard, RwLock};
-use async_trait::async_trait;
 use defragmentation::*;
 use link::*;
 pub(super) use seq_num::*;
-use tx::*;
 use zenoh_util::core::{ZError, ZErrorKind, ZResult};
 use zenoh_util::{zasyncread, zasyncwrite, zerror};
-
-#[async_trait]
-pub(crate) trait Scheduling {
-    async fn schedule(&self, msg: ZenohMessage, links: &Arc<RwLock<Vec<SessionTransportLink>>>);
-}
 
 macro_rules! zlinkget {
     ($guard:expr, $link:expr) => {
@@ -119,9 +112,7 @@ pub(crate) struct SessionTransport {
     // The RX best effort channel
     pub(super) rx_best_effort: Arc<Mutex<SessionTransportRxBestEffort>>,
     // The links associated to the channel
-    pub(super) links: Arc<RwLock<Vec<SessionTransportLink>>>,
-    // The scehduling function
-    pub(super) scheduling: Arc<dyn Scheduling + Send + Sync>,
+    pub(super) links: Arc<RwLock<Box<[SessionTransportLink]>>>,
     // The callback
     pub(super) callback: Arc<RwLock<Option<SessionEventDispatcher>>>,
     // Mutex for notification
@@ -162,8 +153,7 @@ impl SessionTransport {
                 initial_sn_rx,
                 sn_resolution,
             ))),
-            links: Arc::new(RwLock::new(Vec::new())),
-            scheduling: Arc::new(FirstMatch::new()),
+            links: Arc::new(RwLock::new(vec![].into_boxed_slice())),
             callback: Arc::new(RwLock::new(None)),
             alive: Arc::new(Mutex::new(true)),
             is_shm,
@@ -208,9 +198,12 @@ impl SessionTransport {
 
         // Close all the links
         let mut l_guard = zasyncwrite!(self.links);
-        for l in l_guard.drain(..) {
+        let mut links = l_guard.to_vec();
+        for l in links.drain(..) {
             let _ = l.close().await;
         }
+        *l_guard = vec![].into_boxed_slice();
+        drop(l_guard);
 
         // Notify the callback that we have closed the session
         if let Some(callback) = c_guard.take() {
@@ -257,11 +250,12 @@ impl SessionTransport {
         let attachment = None; // No attachment here
         let msg = SessionMessage::make_close(peer_id, reason_id, link_only, attachment);
 
-        let mut links = zasyncread!(self.links).clone();
-        for link in links.drain(..) {
+        let guard = zasyncread!(self.links);
+        for link in guard.iter() {
             link.schedule_session_message(msg.clone(), QUEUE_PRIO_DATA)
                 .await;
         }
+        drop(guard);
 
         // Terminate and clean up the session
         self.delete().await;
@@ -274,18 +268,18 @@ impl SessionTransport {
     /*************************************/
     /// Schedule a Zenoh message on the transmission queue    
     #[cfg(feature = "zero-copy")]
-    #[inline]
     pub(crate) async fn schedule(&self, mut message: ZenohMessage) {
-        if !self.is_shm {
+        if self.is_shm {
+            message.inc_ref_shm();
+        } else {
             message.flatten_shm();
         }
-        self.scheduling.schedule(message, &self.links).await;
+        self.schedule_first_fit(message).await;
     }
 
     #[cfg(not(feature = "zero-copy"))]
-    #[inline]
     pub(crate) async fn schedule(&self, message: ZenohMessage) {
-        self.scheduling.schedule(message, &self.links).await;
+        self.schedule_first_fit(message).await;
     }
 
     /*************************************/
@@ -317,7 +311,10 @@ impl SessionTransport {
         );
 
         // Add the link to the channel
-        guard.push(link);
+        let mut links = Vec::with_capacity(guard.len() + 1);
+        links.extend_from_slice(&guard);
+        links.push(link);
+        *guard = links.into_boxed_slice();
 
         Ok(())
     }
@@ -342,22 +339,22 @@ impl SessionTransport {
         // Try to remove the link
         let mut guard = zasyncwrite!(self.links);
         if let Some(index) = zlinkindex!(guard, link) {
-            // Remove the link
-            let link = guard.remove(index);
-            drop(guard);
-            // Notify the callback
-            if let Some(callback) = zasyncread!(self.callback).as_ref() {
-                callback.del_link(link.get_link().clone()).await;
-            }
-            // Eventually close the whole session if not links left
-            let guard = zasyncread!(self.links);
-            if guard.is_empty() {
+            let is_last = guard.len() == 1;
+            if is_last {
+                // Close the whole session
                 drop(guard);
                 self.delete().await;
                 Ok(())
             } else {
+                // Remove the link
+                let mut links = guard.to_vec();
+                let link = links.remove(index);
+                *guard = links.into_boxed_slice();
                 drop(guard);
-                // Close the link
+                // Notify the callback
+                if let Some(callback) = zasyncread!(self.callback).as_ref() {
+                    callback.del_link(link.get_link().clone()).await;
+                }
                 link.close().await
             }
         } else {

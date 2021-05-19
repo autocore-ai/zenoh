@@ -18,6 +18,8 @@ on:
     branches: [ '**' ]
   pull_request:
     branches: [ '**' ]
+  schedule:
+    - cron: '0 6 * * 1-5'
 
 jobs:
   build:
@@ -32,7 +34,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
 
-    - name: Install latest nightly
+    - name: Install Rust toolchain
       uses: actions-rs/toolchain@v1
       with:
           components: rustfmt, clippy

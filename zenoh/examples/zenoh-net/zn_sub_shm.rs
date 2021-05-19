@@ -11,8 +11,11 @@
 // Contributors:
 //   ADLINK zenoh team, <zenoh@adlink-labs.tech>
 //
+#[cfg(feature = "zero-copy")]
 use clap::{App, Arg};
+#[cfg(feature = "zero-copy")]
 use futures::prelude::*;
+#[cfg(feature = "zero-copy")]
 use futures::select;
 #[cfg(feature = "zero-copy")]
 use zenoh::net::*;
@@ -50,6 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut stdin = async_std::io::stdin();
     let mut input = [0u8];
+
     loop {
         select!(
             sample = subscriber.stream().next().fuse() => {
@@ -76,6 +80,7 @@ fn main() {
     );
 }
 
+#[cfg(feature = "zero-copy")]
 fn parse_args() -> (Properties, String) {
     let args = App::new("zenoh-net sub example")
         .arg(

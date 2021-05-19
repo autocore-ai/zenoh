@@ -571,9 +571,26 @@ pub struct ZenohMessage {
     pub routing_context: Option<RoutingContext>,
     pub reply_context: Option<ReplyContext>,
     pub attachment: Option<Attachment>,
+    #[cfg(feature = "stats")]
+    pub size: Option<std::num::NonZeroUsize>,
 }
 
 impl std::fmt::Debug for ZenohMessage {
+    #[cfg(feature = "stats")]
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+            self.body,
+            self.reliability,
+            self.congestion_control,
+            self.routing_context,
+            self.reply_context,
+            self.attachment,
+            self.size
+        )
+    }
+    #[cfg(not(feature = "stats"))]
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(
             f,
@@ -610,10 +627,13 @@ impl ZenohMessage {
             routing_context,
             reply_context: None,
             attachment,
+            #[cfg(feature = "stats")]
+            size: None,
         }
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
     pub fn make_data(
         key: ResKey,
         payload: RBuf,
@@ -648,6 +668,8 @@ impl ZenohMessage {
             routing_context,
             reply_context,
             attachment,
+            #[cfg(feature = "stats")]
+            size: None,
         }
     }
 
@@ -671,6 +693,8 @@ impl ZenohMessage {
             routing_context: None,
             reply_context,
             attachment,
+            #[cfg(feature = "stats")]
+            size: None,
         }
     }
 
@@ -703,9 +727,12 @@ impl ZenohMessage {
             routing_context: None,
             reply_context: None,
             attachment,
+            #[cfg(feature = "stats")]
+            size: None,
         }
     }
 
+    #[inline(always)]
     pub fn make_query(
         key: ResKey,
         predicate: String,
@@ -733,6 +760,8 @@ impl ZenohMessage {
             routing_context,
             reply_context: None,
             attachment,
+            #[cfg(feature = "stats")]
+            size: None,
         }
     }
 
@@ -750,6 +779,8 @@ impl ZenohMessage {
             routing_context: None,
             reply_context: None,
             attachment,
+            #[cfg(feature = "stats")]
+            size: None,
         }
     }
 

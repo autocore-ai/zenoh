@@ -17,13 +17,18 @@ members = [
   "zenoh",
   "zenoh-util",
   "plugins/example-plugin",
-  "plugins/zenoh-rest",
-  "plugins/zenoh-storages",
+  "plugins/zenoh-plugin-rest",
+  "plugins/zenoh-plugin-storages",
   "backends/traits",
 ]
 
+[profile.dev]
+debug=true
+opt-level = 1
+
+
 [profile.release]
-debug=false
+debug=true
 lto="fat"
 codegen-units=1
 opt-level=3

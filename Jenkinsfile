@@ -129,9 +129,9 @@ pipeline {
             rustup default ${RUST_TOOLCHAIN} && \
             cargo build --release --bins --lib --examples && \
             if [[ ${GIT_TAG} != origin/* ]]; then \
-              cargo deb -p zenoh-router && \
-              cargo deb -p zenoh-rest && \
-              cargo deb -p zenoh-storages && \
+              cargo deb -p zenoh && \
+              cargo deb -p zenoh-plugin-rest && \
+              cargo deb -p zenoh-plugin-storages && \
               ./gen_zenoh_deb.sh x86_64-unknown-linux-gnu amd64 \
             ;fi \
           "
@@ -157,9 +157,9 @@ pipeline {
             rustup default ${RUST_TOOLCHAIN} && \
             cargo build --release --bins --lib --examples && \
             if [[ ${GIT_TAG} != origin/* ]]; then \
-              cargo deb -p zenoh-router && \
-              cargo deb -p zenoh-rest && \
-              cargo deb -p zenoh-storages && \
+              cargo deb -p zenoh && \
+              cargo deb -p zenoh-plugin-rest && \
+              cargo deb -p zenoh-plugin-storages && \
               ./gen_zenoh_deb.sh i686-unknown-linux-gnu i386 \
             ;fi \
           "
@@ -185,9 +185,9 @@ pipeline {
             rustup default ${RUST_TOOLCHAIN} && \
             cargo build --release --bins --lib --examples && \
             if [[ ${GIT_TAG} != origin/* ]]; then
-              cargo deb -p zenoh-router && \
-              cargo deb -p zenoh-rest && \
-              cargo deb -p zenoh-storages && \
+              cargo deb -p zenoh && \
+              cargo deb -p zenoh-plugin-rest && \
+              cargo deb -p zenoh-plugin-storages && \
               ./gen_zenoh_deb.sh aarch64-unknown-linux-gnu aarch64 \
             ;fi \
           "
@@ -360,10 +360,9 @@ pipeline {
       steps {
         sh '''
         cd zenoh-util && cargo publish && cd - && sleep 30
-        cd zenoh-protocol && cargo publish && cd - && sleep 30
-        cd zenoh-router && cargo publish && cd - && sleep 30
         cd zenoh && cargo publish && cd - && sleep 30
         cd backends/traits && cargo publish && cd -
+        cd plugins/zenoh-plugin-rest && cargo publish && cd -
         '''
       }
     }

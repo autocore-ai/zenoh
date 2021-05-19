@@ -1,3 +1,4 @@
+#[cfg(feature = "zero-copy")]
 //
 // Copyright (c) 2017, 2020 ADLINK Technology Inc.
 //
@@ -30,6 +31,7 @@ use zenoh_util::core::ZResult;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 const SLEEP: Duration = Duration::from_secs(1);
+const USLEEP: Duration = Duration::from_micros(100);
 
 const MSG_COUNT: usize = 1_000;
 const MSG_SIZE: usize = 1_024;
@@ -83,14 +85,14 @@ impl SCPeer {
 #[async_trait]
 impl SessionEventHandler for SCPeer {
     async fn handle_message(&self, message: ZenohMessage) -> ZResult<()> {
-        let len = match self.shm.as_ref() {
+        let payload = match self.shm.as_ref() {
             Some(shm) => {
                 let mut shm = shm.lock().await;
                 match message.body {
                     ZenohBody::Data(Data { payload, .. }) => {
                         print!("s");
                         let sbuf = payload.into_shm(&mut shm).unwrap();
-                        sbuf.as_slice().len()
+                        sbuf.as_slice().to_vec()
                     }
                     _ => panic!("Unsolicited message"),
                 }
@@ -98,13 +100,20 @@ impl SessionEventHandler for SCPeer {
             None => match message.body {
                 ZenohBody::Data(Data { payload, .. }) => {
                     print!("n");
-                    payload.len()
+                    payload.to_vec()
                 }
                 _ => panic!("Unsolicited message"),
             },
         };
-        assert_eq!(len, MSG_SIZE);
-        self.count.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(payload.len(), MSG_SIZE);
+
+        let mut count_bytes = [0u8; 8];
+        count_bytes.copy_from_slice(&payload[0..8]);
+        let msg_count = u64::from_le_bytes(count_bytes) as usize;
+        let sex_count = self.count.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(msg_count, sex_count);
+        print!("{} ", msg_count);
+
         Ok(())
     }
 
@@ -224,46 +233,58 @@ async fn run(locator: &Locator) {
         .unwrap()
         .unwrap();
 
-    // Create the message to send
-    println!("Session SHM [4a]");
-    let mut sbuf = shm01.alloc(MSG_SIZE).unwrap();
-    let bs = unsafe { sbuf.as_mut_slice() };
-    bs.fill(0u8);
-
-    println!("Session SHM [4b]");
-    let key = ResKey::RName("/test".to_string());
-    let payload: RBuf = sbuf.into();
-    let reliability = Reliability::Reliable;
-    let congestion_control = CongestionControl::Block;
-    let data_info = None;
-    let routing_context = None;
-    let reply_context = None;
-    let attachment = None;
-    let message = ZenohMessage::make_data(
-        key,
-        payload,
-        reliability,
-        congestion_control,
-        data_info,
-        routing_context,
-        reply_context,
-        attachment,
-    );
-
     // Send the message
-    println!("Session SHM [5a]");
+    println!("Session SHM [3a]");
+    // The msg count
+    let mut msg_count: u64 = 0;
     for _ in 0..MSG_COUNT {
+        // Create the message to send
+        let mut sbuf = async {
+            loop {
+                match shm01.alloc(MSG_SIZE) {
+                    Some(sbuf) => break sbuf,
+                    None => task::sleep(USLEEP).await,
+                }
+            }
+        }
+        .timeout(TIMEOUT)
+        .await
+        .unwrap();
+        let bs = unsafe { sbuf.as_mut_slice() };
+        bs[0..8].copy_from_slice(&msg_count.to_le_bytes());
+
+        let key = ResKey::RName("/test".to_string());
+        let payload: RBuf = sbuf.into();
+        let reliability = Reliability::Reliable;
+        let congestion_control = CongestionControl::Block;
+        let data_info = None;
+        let routing_context = None;
+        let reply_context = None;
+        let attachment = None;
+        let message = ZenohMessage::make_data(
+            key,
+            payload,
+            reliability,
+            congestion_control,
+            data_info,
+            routing_context,
+            reply_context,
+            attachment,
+        );
+
         peer_shm02_session
             .handle_message(message.clone())
             .await
             .unwrap();
+
+        msg_count += 1;
     }
 
     // Wait a little bit
     task::sleep(SLEEP).await;
 
     // Wait for the messages to arrive to the other side
-    println!("\nSession SHM [5b]");
+    println!("\nSession SHM [3b]");
     let count = async {
         while peer_shm02_handler.get_count() != MSG_COUNT {
             task::sleep(SLEEP).await;
@@ -272,19 +293,57 @@ async fn run(locator: &Locator) {
     let _ = count.timeout(TIMEOUT).await.unwrap();
 
     // Send the message
-    println!("Session SHM [6a]");
+    println!("Session SHM [4a]");
+    // The msg count
+    let mut msg_count: u64 = 0;
     for _ in 0..MSG_COUNT {
+        // Create the message to send
+        let mut sbuf = async {
+            loop {
+                match shm01.alloc(MSG_SIZE) {
+                    Some(sbuf) => break sbuf,
+                    None => task::sleep(USLEEP).await,
+                }
+            }
+        }
+        .timeout(TIMEOUT)
+        .await
+        .unwrap();
+        let bs = unsafe { sbuf.as_mut_slice() };
+        bs[0..8].copy_from_slice(&msg_count.to_le_bytes());
+
+        let key = ResKey::RName("/test".to_string());
+        let payload: RBuf = sbuf.into();
+        let reliability = Reliability::Reliable;
+        let congestion_control = CongestionControl::Block;
+        let data_info = None;
+        let routing_context = None;
+        let reply_context = None;
+        let attachment = None;
+        let message = ZenohMessage::make_data(
+            key,
+            payload,
+            reliability,
+            congestion_control,
+            data_info,
+            routing_context,
+            reply_context,
+            attachment,
+        );
+
         peer_net01_session
             .handle_message(message.clone())
             .await
             .unwrap();
+
+        msg_count += 1;
     }
 
     // Wait a little bit
     task::sleep(SLEEP).await;
 
     // Wait for the messages to arrive to the other side
-    println!("\nSession SHM [6b]");
+    println!("\nSession SHM [4b]");
     let count = async {
         while peer_net01_handler.get_count() != MSG_COUNT {
             task::sleep(SLEEP).await;
@@ -296,7 +355,7 @@ async fn run(locator: &Locator) {
     task::sleep(SLEEP).await;
 
     // Close the sessions
-    println!("Session SHM [7a]");
+    println!("Session SHM [5a]");
     let _ = peer_shm02_session
         .close()
         .timeout(TIMEOUT)
@@ -304,7 +363,7 @@ async fn run(locator: &Locator) {
         .unwrap()
         .unwrap();
 
-    println!("Session SHM [7b]");
+    println!("Session SHM [5b]");
     let _ = peer_net01_session
         .close()
         .timeout(TIMEOUT)
@@ -316,7 +375,7 @@ async fn run(locator: &Locator) {
     task::sleep(SLEEP).await;
 
     // Delete the listener
-    println!("Session SHM [8a]");
+    println!("Session SHM [6a]");
     let _ = peer_shm01_manager
         .del_listener(locator)
         .timeout(TIMEOUT)

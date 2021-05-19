@@ -183,25 +183,27 @@ pub fn get_interface(name: &str) -> ZResult<Option<IpAddr>> {
 }
 
 /// Get the network interface to bind the UDP sending port to when not specified by user
-pub fn get_default_multicast_interface() -> Option<IpAddr> {
+pub fn get_multicast_interfaces() -> Vec<IpAddr> {
     #[cfg(unix)]
     {
-        // In unix family, return first active, non-loopback, multicast enabled interface
-        for iface in pnet::datalink::interfaces() {
-            if iface.is_up() && !iface.is_loopback() && iface.is_multicast() {
-                for ipaddr in iface.ips {
-                    if ipaddr.is_ipv4() {
-                        return Some(ipaddr.ip());
+        pnet::datalink::interfaces()
+            .iter()
+            .filter_map(|iface| {
+                if iface.is_up() && iface.is_multicast() {
+                    for ipaddr in &iface.ips {
+                        if ipaddr.is_ipv4() {
+                            return Some(ipaddr.ip());
+                        }
                     }
                 }
-            }
-        }
-        None
+                None
+            })
+            .collect()
     }
     #[cfg(windows)]
     {
         // On windows, bind to 0.0.0.0, the system will select the default interface
-        Some(IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)))
+        vec![IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0))]
     }
 }
 

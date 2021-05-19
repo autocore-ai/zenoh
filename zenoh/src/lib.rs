@@ -82,9 +82,8 @@
     html_root_url = "https://eclipse-zenoh.github.io/zenoh/zenoh/"
 )]
 #![feature(async_closure)]
-#![feature(bool_to_option)]
-#![feature(get_mut_unchecked)]
 #![feature(map_into_keys_values)]
+#![feature(can_vector)]
 #![recursion_limit = "256"]
 
 #[macro_use]
@@ -109,11 +108,11 @@ mod workspace;
 pub use workspace::*;
 
 mod path;
-pub use path::Path;
+pub use path::{path, Path};
 mod pathexpr;
-pub use pathexpr::PathExpr;
+pub use pathexpr::{pathexpr, PathExpr};
 mod selector;
-pub use selector::Selector;
+pub use selector::{selector, Selector};
 mod values;
 pub use values::*;
 

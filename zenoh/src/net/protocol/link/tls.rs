@@ -20,7 +20,7 @@ use async_std::channel::{bounded, Receiver, Sender};
 use async_std::fs;
 use async_std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use async_std::prelude::*;
-use async_std::sync::{Arc, Barrier, RwLock};
+use async_std::sync::{Arc, Barrier, Mutex, RwLock};
 use async_std::task;
 use async_trait::async_trait;
 use std::cell::UnsafeCell;
@@ -98,7 +98,7 @@ async fn get_tls_dns(locator: &Locator) -> ZResult<DNSName> {
                 match split.get(0) {
                     Some(dom) => {
                         let domain = DNSNameRef::try_from_ascii_str(dom).map_err(|e| {
-                            let e = format!("{}", e);
+                            let e = e.to_string();
                             zerror2!(ZErrorKind::InvalidLocator { descr: e })
                         })?;
                         Ok(domain.to_owned())
@@ -111,7 +111,7 @@ async fn get_tls_dns(locator: &Locator) -> ZResult<DNSName> {
             }
         },
         _ => {
-            let e = format!("Not a TCP locator: {}", locator);
+            let e = format!("Not a TLS locator: {}", locator);
             return zerror!(ZErrorKind::InvalidLocator { descr: e });
         }
     }
@@ -279,10 +279,24 @@ impl From<(Option<Arc<ClientConfig>>, Option<Arc<ServerConfig>>)> for LocatorPro
     }
 }
 
+impl From<(Option<Arc<ServerConfig>>, Option<Arc<ClientConfig>>)> for LocatorProperty {
+    fn from(tuple: (Option<Arc<ServerConfig>>, Option<Arc<ClientConfig>>)) -> LocatorProperty {
+        Self::from(LocatorPropertyTls::new(tuple.1, tuple.0))
+    }
+}
+
 impl From<(Option<ClientConfig>, Option<ServerConfig>)> for LocatorProperty {
     fn from(mut tuple: (Option<ClientConfig>, Option<ServerConfig>)) -> LocatorProperty {
         let client_config = tuple.0.take().map(Arc::new);
         let server_config = tuple.1.take().map(Arc::new);
+        Self::from((client_config, server_config))
+    }
+}
+
+impl From<(Option<ServerConfig>, Option<ClientConfig>)> for LocatorProperty {
+    fn from(mut tuple: (Option<ServerConfig>, Option<ClientConfig>)) -> LocatorProperty {
+        let client_config = tuple.1.take().map(Arc::new);
+        let server_config = tuple.0.take().map(Arc::new);
         Self::from((client_config, server_config))
     }
 }
@@ -304,6 +318,9 @@ pub struct LinkTls {
     src_addr: SocketAddr,
     // The destination socket address of this link (address used on the local host)
     dst_addr: SocketAddr,
+    // Make sure there are no concurrent read or writes
+    write_mtx: Mutex<()>,
+    read_mtx: Mutex<()>,
 }
 
 unsafe impl Send for LinkTls {}
@@ -342,12 +359,14 @@ impl LinkTls {
             inner: UnsafeCell::new(socket),
             src_addr,
             dst_addr,
+            write_mtx: Mutex::new(()),
+            read_mtx: Mutex::new(()),
         }
     }
 
     // NOTE: It is safe to suppress Clippy warning since no concurrent reads
-    //       or concurrent writes will ever happen. This is enforced by the
-    //       transmission and reception logic in zenoh.
+    //       or concurrent writes will ever happen. The read_mtx and write_mtx
+    //       are respectively acquired in any read and write operation.
     #[allow(clippy::mut_from_ref)]
     fn get_sock_mut(&self) -> &mut TlsStream<TcpStream> {
         unsafe { &mut *self.inner.get() }
@@ -356,6 +375,7 @@ impl LinkTls {
     pub(crate) async fn close(&self) -> ZResult<()> {
         log::trace!("Closing TLS link: {}", self);
         // Flush the TLS stream
+        let _guard = zasynclock!(self.write_mtx);
         let tls_stream = self.get_sock_mut();
         let res = tls_stream.flush().await;
         log::trace!("TLS link flush {}: {:?}", self, res);
@@ -365,84 +385,72 @@ impl LinkTls {
         log::trace!("TLS link shutdown {}: {:?}", self, res);
         res.map_err(|e| {
             zerror2!(ZErrorKind::IoError {
-                descr: format!("{}", e),
+                descr: e.to_string(),
             })
         })
     }
 
-    #[inline]
     pub(crate) async fn write(&self, buffer: &[u8]) -> ZResult<usize> {
-        match self.get_sock_mut().write(buffer).await {
-            Ok(n) => Ok(n),
-            Err(e) => {
-                log::trace!("Transmission error on TLS link {}: {}", self, e);
-                zerror!(ZErrorKind::IoError {
-                    descr: format!("{}", e)
-                })
-            }
-        }
+        let _guard = zasynclock!(self.write_mtx);
+        self.get_sock_mut().write(buffer).await.map_err(|e| {
+            log::trace!("Write error on TLS link {}: {}", self, e);
+            zerror2!(ZErrorKind::IoError {
+                descr: e.to_string()
+            })
+        })
     }
 
-    #[inline]
     pub(crate) async fn write_all(&self, buffer: &[u8]) -> ZResult<()> {
-        match self.get_sock_mut().write_all(buffer).await {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                log::trace!("Transmission error on TLS link {}: {}", self, e);
-                zerror!(ZErrorKind::IoError {
-                    descr: format!("{}", e)
-                })
-            }
-        }
+        let _guard = zasynclock!(self.write_mtx);
+        self.get_sock_mut().write_all(buffer).await.map_err(|e| {
+            log::trace!("Write error on TLS link {}: {}", self, e);
+            zerror2!(ZErrorKind::IoError {
+                descr: e.to_string()
+            })
+        })
     }
 
-    #[inline]
     pub(crate) async fn read(&self, buffer: &mut [u8]) -> ZResult<usize> {
-        match self.get_sock_mut().read(buffer).await {
-            Ok(n) => Ok(n),
-            Err(e) => {
-                log::trace!("Reception error on TLS link {}: {}", self, e);
-                zerror!(ZErrorKind::IoError {
-                    descr: format!("{}", e)
-                })
-            }
-        }
+        let _guard = zasynclock!(self.read_mtx);
+        self.get_sock_mut().read(buffer).await.map_err(|e| {
+            log::trace!("Read error on TLS link {}: {}", self, e);
+            zerror2!(ZErrorKind::IoError {
+                descr: e.to_string()
+            })
+        })
     }
 
-    #[inline]
     pub(crate) async fn read_exact(&self, buffer: &mut [u8]) -> ZResult<()> {
-        match self.get_sock_mut().read_exact(buffer).await {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                log::trace!("Reception error on TLS link {}: {}", self, e);
-                zerror!(ZErrorKind::IoError {
-                    descr: format!("{}", e)
-                })
-            }
-        }
+        let _guard = zasynclock!(self.read_mtx);
+        self.get_sock_mut().read_exact(buffer).await.map_err(|e| {
+            log::trace!("Read error on TLS link {}: {}", self, e);
+            zerror2!(ZErrorKind::IoError {
+                descr: e.to_string()
+            })
+        })
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn get_src(&self) -> Locator {
         Locator::Tls(LocatorTls::SocketAddr(self.src_addr))
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn get_dst(&self) -> Locator {
         Locator::Tls(LocatorTls::SocketAddr(self.dst_addr))
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn get_mtu(&self) -> usize {
         *TLS_DEFAULT_MTU
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn is_reliable(&self) -> bool {
         true
     }
 
-    #[inline]
+    #[inline(always)]
     pub(crate) fn is_streamed(&self) -> bool {
         true
     }

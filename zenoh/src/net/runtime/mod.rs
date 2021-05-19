@@ -29,7 +29,8 @@ use orchestrator::SessionOrchestrator;
 use uhlc::HLC;
 use zenoh_util::core::{ZError, ZErrorKind, ZResult};
 use zenoh_util::properties::config::*;
-use zenoh_util::{zerror, zerror2};
+use zenoh_util::sync::get_mut_unchecked;
+use zenoh_util::{zasyncwrite, zerror, zerror2};
 
 pub struct RuntimeState {
     pub pid: PeerId,
@@ -102,22 +103,28 @@ impl Runtime {
             .get_or(&ZN_PEERS_AUTOCONNECT_KEY, ZN_PEERS_AUTOCONNECT_DEFAULT)
             .to_lowercase()
             == ZN_TRUE;
+        let routers_autoconnect_gossip = config
+            .get_or(
+                &ZN_ROUTERS_AUTOCONNECT_GOSSIP_KEY,
+                ZN_ROUTERS_AUTOCONNECT_GOSSIP_DEFAULT,
+            )
+            .to_lowercase()
+            == ZN_TRUE;
         if whatami != whatami::CLIENT
             && config
                 .get_or(&ZN_LINK_STATE_KEY, ZN_LINK_STATE_DEFAULT)
                 .to_lowercase()
                 == ZN_TRUE
         {
-            unsafe {
-                Arc::get_mut_unchecked(&mut router)
-                    .init_link_state(orchestrator.clone(), peers_autoconnect)
-                    .await;
-            }
+            get_mut_unchecked(&mut router)
+                .init_link_state(
+                    orchestrator.clone(),
+                    peers_autoconnect,
+                    routers_autoconnect_gossip,
+                )
+                .await;
         }
-        match orchestrator
-            .init(session_manager, config, peers_autoconnect)
-            .await
-        {
+        match orchestrator.init(session_manager, config).await {
             Ok(()) => Ok(Runtime {
                 state: Arc::new(RwLock::new(RuntimeState {
                     pid,
@@ -130,11 +137,11 @@ impl Runtime {
     }
 
     pub async fn read(&self) -> RwLockReadGuard<'_, RuntimeState> {
-        self.state.read().await
+        zasyncread!(self.state)
     }
 
     pub async fn write(&self) -> RwLockWriteGuard<'_, RuntimeState> {
-        self.state.write().await
+        zasyncwrite!(self.state)
     }
 
     pub async fn close(&self) -> ZResult<()> {

@@ -12,7 +12,7 @@
 //   ADLINK zenoh team, <zenoh@adlink-labs.tech>
 //
 use petgraph::graph::NodeIndex;
-use petgraph::visit::{VisitMap, Visitable};
+use petgraph::visit::{IntoNodeReferences, VisitMap, Visitable};
 use std::convert::TryInto;
 use vec_map::VecMap;
 
@@ -84,8 +84,9 @@ pub(crate) struct Tree {
 pub(crate) struct Network {
     pub(crate) name: String,
     pub(crate) peers_autoconnect: bool,
+    pub(crate) routers_autoconnect_gossip: bool,
     pub(crate) idx: NodeIndex,
-    pub(crate) links: Vec<Link>,
+    pub(crate) links: VecMap<Link>,
     pub(crate) trees: Vec<Tree>,
     pub(crate) graph: petgraph::stable_graph::StableUnGraph<Node, f64>,
     pub(crate) orchestrator: SessionOrchestrator,
@@ -97,6 +98,7 @@ impl Network {
         pid: PeerId,
         orchestrator: SessionOrchestrator,
         peers_autoconnect: bool,
+        routers_autoconnect_gossip: bool,
     ) -> Self {
         let mut graph = petgraph::stable_graph::StableGraph::default();
         log::debug!("{} Add node (self) {}", name, pid);
@@ -110,8 +112,9 @@ impl Network {
         Network {
             name,
             peers_autoconnect,
+            routers_autoconnect_gossip,
             idx,
-            links: vec![],
+            links: VecMap::new(),
             trees: vec![Tree {
                 parent: None,
                 childs: vec![],
@@ -144,7 +147,7 @@ impl Network {
     #[inline]
     pub(crate) fn get_link_from_pid(&self, pid: &PeerId) -> Option<&Link> {
         self.links
-            .iter()
+            .values()
             .find(|link| link.session.get_pid().unwrap() == *pid)
     }
 
@@ -158,7 +161,7 @@ impl Network {
     fn add_node(&mut self, node: Node) -> NodeIndex {
         let pid = node.pid.clone();
         let idx = self.graph.add_node(node);
-        for link in &mut self.links {
+        for link in self.links.values_mut() {
             if let Some((psid, _)) = link.mappings.iter().find(|(_, p)| **p == pid) {
                 link.local_mappings.insert(psid, idx.index() as ZInt);
             }
@@ -191,7 +194,7 @@ impl Network {
             } else {
                 None
             },
-            whatami: None,
+            whatami: Some(self.graph[idx].whatami),
             locators: if idx == self.idx {
                 Some(self.orchestrator.manager().await.get_locators().await)
             } else {
@@ -227,7 +230,7 @@ impl Network {
         P: FnMut(&Link) -> bool,
     {
         let msg = self.make_msg(idxs).await;
-        for link in &self.links {
+        for link in self.links.values() {
             if predicate(link) {
                 log::trace!(
                     "{} Send to {} {:?}",
@@ -267,7 +270,7 @@ impl Network {
         let links = &mut self.links;
 
         let src_link = match links
-            .iter_mut()
+            .values_mut()
             .find(|link| link.session.get_pid().unwrap() == src)
         {
             Some(link) => link,
@@ -452,11 +455,17 @@ impl Network {
             .filter(|ls| !removed.iter().any(|(idx, _)| idx == &ls.1))
             .collect::<Vec<(Vec<PeerId>, NodeIndex, bool)>>();
 
-        if self.peers_autoconnect && self.orchestrator.whatami == whatami::PEER {
+        if (self.peers_autoconnect && self.orchestrator.whatami == whatami::PEER)
+            || (self.routers_autoconnect_gossip && self.orchestrator.whatami == whatami::ROUTER)
+        {
             // Connect discovered peers
             for (_, idx, _) in &link_states {
                 let node = &self.graph[*idx];
-                if node.whatami == whatami::PEER || node.whatami == whatami::ROUTER {
+                if (self.orchestrator.whatami == whatami::PEER
+                    && (node.whatami == whatami::PEER || node.whatami == whatami::ROUTER))
+                    || (self.orchestrator.whatami == whatami::ROUTER
+                        && node.whatami == whatami::ROUTER)
+                {
                     if let Some(locators) = &node.locators {
                         let orchestrator = self.orchestrator.clone();
                         let pid = node.pid.clone();
@@ -487,7 +496,7 @@ impl Network {
                 .into_iter()
                 .map(|(_, idx1, _new_node)| (idx1, true))
                 .collect::<Vec<(NodeIndex, bool)>>();
-            for link in &self.links {
+            for link in self.links.values() {
                 let link_pid = link.session.get_pid().unwrap();
                 if link_pid != src {
                     let updated_idxs: Vec<(NodeIndex, bool)> = updated_idxs
@@ -517,7 +526,14 @@ impl Network {
     }
 
     pub(crate) async fn add_link(&mut self, session: Session) -> usize {
-        self.links.push(Link::new(session.clone()));
+        let free_index = {
+            let mut i = 0;
+            while self.links.contains_key(i) {
+                i += 1;
+            }
+            i
+        };
+        self.links.insert(free_index, Link::new(session.clone()));
 
         let pid = session.get_pid().unwrap();
         let whatami = session.get_whatami().unwrap();
@@ -558,14 +574,14 @@ impl Network {
 
         let idxs = self.graph.node_indices().map(|i| (i, true)).collect();
         self.send_on_link(idxs, &session).await;
-        self.links.len() - 1
+        free_index
     }
 
     pub(crate) async fn remove_link(&mut self, session: &Session) -> Vec<(NodeIndex, Node)> {
         let pid = session.get_pid().unwrap();
         log::trace!("{} remove_link {}", self.name, pid);
         self.links
-            .retain(|link| link.session.get_pid().unwrap() != pid);
+            .retain(|_, link| link.session.get_pid().unwrap() != pid);
         self.graph[self.idx].links.retain(|link| *link != pid);
 
         let idx = self.get_idx(&pid).unwrap();
@@ -578,7 +594,7 @@ impl Network {
 
         let links = self
             .links
-            .iter()
+            .values()
             .map(|link| {
                 self.get_idx(&link.session.get_pid().unwrap())
                     .unwrap()
@@ -593,14 +609,14 @@ impl Network {
                 psid: self.idx.index().try_into().unwrap(),
                 sn: self.graph[self.idx].sn,
                 pid: None,
-                whatami: None,
+                whatami: Some(self.graph[self.idx].whatami),
                 locators: Some(self.orchestrator.manager().await.get_locators().await),
                 links,
             }],
             None,
         );
 
-        for link in &self.links {
+        for link in self.links.values() {
             if let Err(e) = link.session.handle_message(msg.clone()).await {
                 log::error!("{} Error sending LinkStateList: {}", self.name, e);
             }
@@ -730,4 +746,17 @@ impl Network {
 
         new_childs
     }
+}
+
+#[inline]
+pub(super) fn shared_nodes(net1: &Network, net2: &Network) -> Vec<PeerId> {
+    net1.graph
+        .node_references()
+        .filter_map(|(_, node1)| {
+            net2.graph
+                .node_references()
+                .any(|(_, node2)| node1.pid == node2.pid)
+                .then(|| node1.pid.clone())
+        })
+        .collect()
 }

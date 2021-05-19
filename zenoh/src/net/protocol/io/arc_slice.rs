@@ -19,14 +19,14 @@ use std::io::IoSlice;
 use std::ops::{
     Deref, Index, Range, RangeFrom, RangeFull, RangeInclusive, RangeTo, RangeToInclusive,
 };
-use zenoh_util::collections::RecyclingBuffer;
+use zenoh_util::collections::RecyclingObject;
 
 /*************************************/
 /*         ARC SLICE BUFFER          */
 /*************************************/
 #[derive(Clone)]
 pub enum ArcSliceBuffer {
-    RecyclingBuffer(Arc<RecyclingBuffer>),
+    RecyclingObject(Arc<RecyclingObject<Box<[u8]>>>),
     OwnedBuffer(Arc<Vec<u8>>),
     #[cfg(feature = "zero-copy")]
     SharedBuffer(Arc<SharedMemoryBuf>),
@@ -37,8 +37,8 @@ impl Deref for ArcSliceBuffer {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            Self::RecyclingBuffer(buf) => buf.as_slice(),
-            Self::OwnedBuffer(buf) => buf.as_slice(),
+            Self::RecyclingObject(buf) => buf,
+            Self::OwnedBuffer(buf) => buf,
             #[cfg(feature = "zero-copy")]
             Self::SharedBuffer(buf) => buf.as_slice(),
         }
@@ -103,14 +103,14 @@ impl Index<RangeToInclusive<usize>> for ArcSliceBuffer {
 }
 
 // From traits
-impl From<Arc<RecyclingBuffer>> for ArcSliceBuffer {
-    fn from(buf: Arc<RecyclingBuffer>) -> ArcSliceBuffer {
-        ArcSliceBuffer::RecyclingBuffer(buf)
+impl From<Arc<RecyclingObject<Box<[u8]>>>> for ArcSliceBuffer {
+    fn from(buf: Arc<RecyclingObject<Box<[u8]>>>) -> ArcSliceBuffer {
+        ArcSliceBuffer::RecyclingObject(buf)
     }
 }
 
-impl From<RecyclingBuffer> for ArcSliceBuffer {
-    fn from(buf: RecyclingBuffer) -> ArcSliceBuffer {
+impl From<RecyclingObject<Box<[u8]>>> for ArcSliceBuffer {
+    fn from(buf: RecyclingObject<Box<[u8]>>) -> ArcSliceBuffer {
         ArcSliceBuffer::from(Arc::new(buf))
     }
 }
@@ -137,6 +137,13 @@ impl From<&[u8]> for ArcSliceBuffer {
 impl From<Arc<SharedMemoryBuf>> for ArcSliceBuffer {
     fn from(buf: Arc<SharedMemoryBuf>) -> ArcSliceBuffer {
         ArcSliceBuffer::SharedBuffer(buf)
+    }
+}
+
+#[cfg(feature = "zero-copy")]
+impl From<Box<SharedMemoryBuf>> for ArcSliceBuffer {
+    fn from(buf: Box<SharedMemoryBuf>) -> ArcSliceBuffer {
+        ArcSliceBuffer::SharedBuffer(buf.into())
     }
 }
 
@@ -244,10 +251,25 @@ impl From<&[u8]> for ArcSlice {
 }
 
 #[cfg(feature = "zero-copy")]
-impl From<SharedMemoryBuf> for ArcSlice {
-    fn from(buf: SharedMemoryBuf) -> ArcSlice {
+impl From<Arc<SharedMemoryBuf>> for ArcSlice {
+    fn from(buf: Arc<SharedMemoryBuf>) -> ArcSlice {
         let len = buf.len();
         ArcSlice::new(buf.into(), 0, len)
+    }
+}
+
+#[cfg(feature = "zero-copy")]
+impl From<Box<SharedMemoryBuf>> for ArcSlice {
+    fn from(buf: Box<SharedMemoryBuf>) -> ArcSlice {
+        let len = buf.len();
+        ArcSlice::new(buf.into(), 0, len)
+    }
+}
+
+#[cfg(feature = "zero-copy")]
+impl From<SharedMemoryBuf> for ArcSlice {
+    fn from(buf: SharedMemoryBuf) -> ArcSlice {
+        ArcSlice::from(Arc::new(buf))
     }
 }
 
