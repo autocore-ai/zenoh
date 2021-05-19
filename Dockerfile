@@ -22,15 +22,26 @@
 # To run this Docker image:
 #    docker run --init -p 7447:7447/tcp -p 7447:7447/udp -p 8000:8000/tcp eclipse/zenoh
 
-FROM alpine:latest
+FROM rust:latest as builder
+
+WORKDIR /root/zenoh
+
+COPY . .
+
+# RUN ls -al
+
+RUN cargo build --all-targets --release
+
+FROM rust:slim
 
 ARG REPO
+
 LABEL org.opencontainers.image.source ${REPO}
 
-RUN apk add --no-cache libgcc libstdc++
-
-COPY target/x86_64-unknown-linux-musl/release/zenohd /
-COPY target/x86_64-unknown-linux-musl/release/*.so /
+COPY --from=builder /root/zenoh/target/release/zenohd /
+COPY --from=builder /root/zenoh/target/release/*.so /
+COPY --from=builder /root/zenoh/target/release/examples/zn_pub /
+COPY --from=builder /root/zenoh/target/release/examples/zn_sub /
 
 RUN echo '#!/bin/ash' > /entrypoint.sh
 RUN echo 'echo " * Starting: /zenohd --mem-storage=/** $*"' >> /entrypoint.sh
