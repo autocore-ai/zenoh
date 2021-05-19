@@ -12,5 +12,10 @@
 
 # Ignore all but files copied by Dockerfile
 *
-!target/x86_64-unknown-linux-musl/release/zenohd
-!target/x86_64-unknown-linux-musl/release/*.so
+!backends
+!plugins
+!zenoh
+!zenoh-util
+!Cargo.toml
+!Dockerfile
+!rust-toolchain
