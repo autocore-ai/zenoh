@@ -16,3 +16,9 @@
 
 # MacOS Related
 .DS_Store
+
+# VSCode project
+.vscode
+
+# Log
+log

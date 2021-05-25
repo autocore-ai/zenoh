@@ -28,9 +28,9 @@ WORKDIR /root/zenoh
 
 COPY . .
 
-# RUN ls -al
+RUN cargo build --release
 
-RUN cargo build --all-targets --release
+RUN cargo build --release --example zn_pub --example zn_sub
 
 FROM rust:slim
 
@@ -44,8 +44,8 @@ COPY --from=builder /root/zenoh/target/release/examples/zn_pub /
 COPY --from=builder /root/zenoh/target/release/examples/zn_sub /
 
 RUN echo '#!/bin/ash' > /entrypoint.sh
-RUN echo 'echo " * Starting: /zenohd --mem-storage=/** $*"' >> /entrypoint.sh
-RUN echo 'exec /zenohd --mem-storage=/** $*' >> /entrypoint.sh
+RUN echo 'echo " * Starting: /zenohd --mem-storage=/rsu/** $*"' >> /entrypoint.sh
+RUN echo 'exec /zenohd --mem-storage=/rsu/** $*' >> /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 7447/udp

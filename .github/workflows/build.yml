@@ -30,7 +30,7 @@ jobs:
       - name: Build and push
         run: |
           docker buildx build \
-          --output "type=image,push=true" \
+          --output type=registry \
           --platform linux/amd64,linux/arm64 \
           --build-arg REPO=${{ env.REPO }} \
           --tag ${{ env.IMG_NAME }}:$(echo ${GITHUB_REF#refs/heads/} | sed 's/\//_/g') \
